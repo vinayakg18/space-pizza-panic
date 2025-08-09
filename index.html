@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Space Pizza Panic</title>
+  <style>
+    body { margin:0; background:#000; color:#fff; font-family:sans-serif; }
+    .wrap { display:flex; flex-direction:column; align-items:center; }
+    canvas { background:#111; border-radius:8px; margin-top:10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="gameCanvas" width="960" height="600"></canvas>
+  </div>
+
+  <script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  const state = {
+    running: false,
+    paused: false,
+    score: 0,
+    best: Number(localStorage.getItem('spp_best') || 0),
+    level: 1,
+    lives: 3,
+    maxLives: 10,
+    player: { x: W/2, y: H-60, vx: 0, speed: 360, r: 16, inv: 0 },
+    bullets: [],
+    enemies: [],
+    hearts: [],
+    particles: [],
+    inputs: { left:false, right:false, shoot:false },
+    shootCd: 0,
+    menu: 'start'
+  };
+
+  addEventListener('keydown', e => {
+    if (e.code==='ArrowLeft'||e.code==='KeyA') state.inputs.left=true;
+    if (e.code==='ArrowRight'||e.code==='KeyD') state.inputs.right=true;
+    if (e.code==='Space') state.inputs.shoot=true;
+    if (e.code==='KeyP') state.paused=!state.paused;
+    if (e.code==='Enter' && state.menu!=='play') startGame();
+  });
+  addEventListener('keyup', e => {
+    if (e.code==='ArrowLeft'||e.code==='KeyA') state.inputs.left=false;
+    if (e.code==='ArrowRight'||e.code==='KeyD') state.inputs.right=false;
+    if (e.code==='Space') state.inputs.shoot=false;
+  });
+
+  function startGame(){
+    state.running=true; state.paused=false; state.score=0; state.level=1; state.lives=3;
+    state.player.x=W/2; state.player.y=H-60; state.player.inv=1.2;
+    state.bullets=[]; state.enemies=[]; state.hearts=[]; state.particles=[];
+    spawnWave(); state.menu='play';
+  }
+
+  function spawnWave(){
+    const n=6+Math.floor(state.level*1.8);
+    for(let i=0;i<n;i++) state.enemies.push(makeEnemy());
+  }
+
+  function makeEnemy(){
+    const y=rand(-200,-40), x=rand(40,W-40);
+    return {x,y,vy:rand(40,80)+state.level*8, t:rand(0,10), sway:rand(0.5,1.5), r:18, hp:2+Math.floor(state.level*0.5)};
+  }
+
+  function maybeDropHeart(x,y){
+    const chance=Math.min(0.06,0.02+state.level*0.004);
+    if(Math.random()<chance) state.hearts.push({x,y,vy:rand(40,70),t:rand(0,10),sway:rand(0.5,1.2),r:10,life:12});
+  }
+
+  function shoot(x,y,vy){ state.bullets.push({x,y,vy,r:6,life:2}); }
+
+  function explode(x,y,color){
+    for(let i=0;i<24;i++) state.particles.push({x,y,vx:rand(-160,160),vy:rand(-160,160),life:rand(0.3,0.8),color});
+  }
+
+  let last=performance.now();
+  function loop(now){
+    const dt=Math.min(0.032,(now-last)/1000); last=now;
+    if(state.running&&!state.paused&&state.menu==='play') update(dt);
+    draw(); requestAnimationFrame(loop);
+  } requestAnimationFrame(loop);
+
+  function update(dt){
+    const p=state.player;
+    p.vx=(state.inputs.left?-p.speed:0)+(state.inputs.right?p.speed:0);
+    p.x=clamp(p.x+p.vx*dt,24,W-24);
+
+    state.shootCd-=dt;
+    if(state.inputs.shoot&&state.shootCd<=0){ shoot(p.x,p.y-20,-520); state.shootCd=0.18; }
+
+    for(let b of state.bullets){ b.y+=b.vy*dt; b.life-=dt; }
+    state.bullets=state.bullets.filter(b=>b.life>0&&b.y>-20&&b.y<H+20);
+
+    for(let e of state.enemies){
+      e.t+=dt; e.y+=e.vy*dt; e.x+=Math.sin(e.t*e.sway)*60*dt;
+      if(Math.random()<0.004+state.level*0.0008) state.bullets.push({x:e.x,y:e.y+10,vy:220+state.level*6,r:6,life:4,enemy:true});
+    }
+
+    if(state.enemies.length<3+state.level){ spawnWave(); state.level++; }
+
+    for(let e of state.enemies){
+      for(let b of state.bullets){
+        if(b.enemy) continue;
+        if(dist2(e,b)<(e.r+b.r)**2){
+          b.life=0; e.hp--; explode(b.x,b.y,'#ffd166');
+          if(e.hp<=0){ e.dead=true; explode(e.x,e.y,'#ff4d6d'); state.score+=25+Math.floor(5*state.level); maybeDropHeart(e.x,e.y); }
+        }
+      }
+    }
+
+    if(state.player.inv>0) state.player.inv-=dt;
+    for(let b of state.bullets){
+      if(!b.enemy) continue;
+      if(dist2(state.player,b)<(state.player.r+b.r)**2){
+        if(state.player.inv<=0){ b.life=0; explode(p.x,p.y,'#4cc9f0'); state.lives--; state.player.inv=1.2; if(state.lives<=0){ gameOver(); return; } }
+      }
+    }
+
+    for(let h of state.hearts){
+      h.t+=dt; h.y+=h.vy*dt; h.x+=Math.sin(h.t*h.sway)*40*dt; h.life-=dt;
+      if(dist2(state.player,h)<(state.player.r+h.r)**2){ h.life=-1; if(state.lives<state.maxLives) state.lives++; explode(h.x,h.y,'#ffcad4'); }
+    }
+    state.hearts=state.hearts.filter(h=>h.life>0&&h.y<H+30);
+
+    state.enemies=state.enemies.filter(e=>!e.dead&&e.y<H+40);
+
+    for(let t of state.particles){ t.x+=t.vx*dt; t.y+=t.vy*dt; t.vx*=0.98; t.vy*=0.98; t.life-=dt; }
+    state.particles=state.particles.filter(t=>t.life>0);
+  }
+
+  function gameOver(){ state.menu='over'; state.running=false; state.best=Math.max(state.best,state.score); localStorage.setItem('spp_best',state.best); }
+  function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy; }
+
+  function drawShip(x,y,r,inv){
+    ctx.save(); ctx.translate(x,y);
+    if(inv>0&&Math.floor(inv*20)%2===0) ctx.globalAlpha=0.4;
+    ctx.fillStyle='#90e0ef'; ctx.beginPath(); ctx.moveTo(0,-r); ctx.lineTo(r*0.8,r); ctx.lineTo(-r*0.8,r); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#caf0f8'; ctx.beginPath(); ctx.arc(0,-r*0.3,r*0.35,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.moveTo(0,r); ctx.lineTo(r*0.4,r+rand(8,18)); ctx.lineTo(-r*0.4,r+rand(8,18)); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawEnemy(x,y,r){
+    ctx.save(); ctx.translate(x,y);
+    ctx.fillStyle='#ff4d6d'; ctx.beginPath(); ctx.ellipse(0,0,r,r*0.6,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.moveTo(0,-r*0.9); ctx.lineTo(r*0.7,r*0.1); ctx.lineTo(-r*0.7,r*0.1); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#d90429';
+    for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.arc(i*r*0.35,-r*0.3+i*2,r*0.15,0,Math.PI*2); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function drawHeart(x,y,r){ ctx.save(); ctx.translate(x,y); ctx.fillStyle='#ff477e'; ctx.beginPath(); const s=r; ctx.moveTo(0,0); ctx.bezierCurveTo(s*0.6,-s*0.9,s*1.4,-s*0.1,0,s*1.0); ctx.bezierCurveTo(-s*1.4,-s*0.1,-s*0.6,-s*0.9,0,0); ctx.fill(); ctx.restore(); }
+
+  function drawLives(){
+    const spacing = 26;
+    for(let i=0;i<state.lives;i++){
+      drawHeart(30 + i*spacing, 30, 10);
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    if(state.menu==='start') return titleScreen('Space Pizza Panic','Press Enter to start');
+    if(state.menu==='over') return titleScreen('Game Over','Press Enter to retry');
+
+    for(let e of state.enemies) drawEnemy(e.x,e.y,e.r);
+    for(let b of state.bullets) ctx.fillStyle=b.enemy?'#ff9e00':'#4cc9f0',ctx.beginPath(),ctx.arc(b.x,b.y,6,0,Math.PI*2),ctx.fill();
+    for(let h of state.hearts) drawHeart(h.x,h.y,h.r);
+    drawShip(state.player.x,state.player.y,state.player.r,state.player.inv);
+    for(let t of state.particles){ ctx.globalAlpha=Math.max(0,Math.min(1,t.life)); ctx.fillStyle=t.color; ctx.fillRect(t.x,t.y,3,3); ctx.globalAlpha=1; }
+
+    ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.fillText(`Score ${state.score}`,20,H-20);
+    ctx.textAlign='center'; ctx.fillText(`Best ${state.best}`,W/2,H-20);
+    drawLives();
+  }
+
+  function titleScreen(title,subtitle){ ctx.fillStyle='#000'; ctx.globalAlpha=0.5; ctx.fillRect(0,0,W,H); ctx.globalAlpha=1; ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font='48px sans-serif'; ctx.fillText(title,W/2,H/2-30); ctx.font='24px sans-serif'; ctx.fillText(subtitle,W/2,H/2+20); }
+  </script>
+</body>
+</html>
