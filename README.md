@@ -3,7 +3,7 @@
 A fast-paced HTML5 browser game where you pilot a tiny spaceship, blast pizza saucers, and collect hearts to stay alive.  
 Built in pure JavaScript — no frameworks, no external assets, just fun.
 
-🎮 **Play now:** [Space Pizza Panic on GitHub Pages](https://https://vinayakg18.github.io/space-pizza-panic/)
+🎮 **Play now:** [Space Pizza Panic on GitHub Pages](https://vinayakg18.github.io/space-pizza-panic/)
 
 ---
 
